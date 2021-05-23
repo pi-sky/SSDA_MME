@@ -290,7 +290,7 @@ def test(loader):
             gt_labels_t.data.resize_(data_t[1].size()).copy_(data_t[1])
             feat = G(im_data_t)
             output1 = F1(feat)
-            output_all = np.r_[output_all, output1.data.cuda().numpy()]
+            output_all = np.r_[output_all, output1.data.cpu().numpy()]
             size += im_data_t.size(0)
             pred1 = output1.data.max(1)[1]
             for t, p in zip(gt_labels_t.view(-1), pred1.view(-1)):
