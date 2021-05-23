@@ -7,10 +7,11 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
 from model.resnet import resnet34
-from model.basenet import AlexNetBase, VGGBase, Predictor, Predictor_deep
+from model.basenet import AlexNetBase, VGGBase, Predictor, Predictor_deep, FCnet
 from utils.utils import weights_init
 from utils.lr_schedule import inv_lr_scheduler
-from utils.return_dataset import return_dataset
+from utils.get_loader import get_dataloaders
+# from utils.return_dataset import return_dataset
 from utils.loss import entropy, adentropy
 # Training settings
 parser = argparse.ArgumentParser(description='SSDA Classification')
@@ -56,12 +57,16 @@ parser.add_argument('--patience', type=int, default=5, metavar='S',
                          'before terminating. (default: 5 (5000 iterations))')
 parser.add_argument('--early', action='store_false', default=True,
                     help='early stopping on validation or not')
+parser.add_argument('--data_path', type=str, default='data_office/amazon_amazon.csv',
+                    help='pisky contri')
 
 args = parser.parse_args()
 print('Dataset %s Source %s Target %s Labeled num perclass %s Network %s' %
       (args.dataset, args.source, args.target, args.num, args.net))
-source_loader, target_loader, target_loader_unl, target_loader_val, \
-    target_loader_test, class_list = return_dataset(args)
+source_loader, target_loader_unl, target_loader_val, \
+    target_loader_test = get_dataloaders(args.data_path)
+class_list = [x for x in range(31)]
+
 use_gpu = torch.cuda.is_available()
 record_dir = 'record/%s/%s' % (args.dataset, args.method)
 if not os.path.exists(record_dir):
@@ -76,8 +81,10 @@ if args.net == 'resnet34':
     G = resnet34()
     inc = 512
 elif args.net == "alexnet":
-    G = AlexNetBase()
-    inc = 4096
+    # G = AlexNetBase()
+    # inc = 4096
+    G = FCnet()
+    inc = 2048
 elif args.net == "vgg":
     G = VGGBase()
     inc = 4096
@@ -98,7 +105,7 @@ if "resnet" in args.net:
     F1 = Predictor_deep(num_class=len(class_list),
                         inc=inc)
 else:
-    F1 = Predictor(num_class=len(class_list), inc=inc,
+    F1 = Predictor(num_class=len(class_list), inc=inc//2,
                    temp=args.T)
 weights_init(F1)
 lr = args.lr
@@ -121,13 +128,13 @@ gt_labels_t = gt_labels_t.cuda()
 sample_labels_t = sample_labels_t.cuda()
 sample_labels_s = sample_labels_s.cuda()
 
-im_data_s = Variable(im_data_s)
-im_data_t = Variable(im_data_t)
-im_data_tu = Variable(im_data_tu)
-gt_labels_s = Variable(gt_labels_s)
-gt_labels_t = Variable(gt_labels_t)
-sample_labels_t = Variable(sample_labels_t)
-sample_labels_s = Variable(sample_labels_s)
+im_data_s.requires_grad_()
+im_data_t.requires_grad_()
+im_data_tu.requires_grad_()
+# gt_labels_s.requires_grad_()
+# gt_labels_t.requires_grad_()
+# sample_labels_t = Variable(sample_labels_t)
+# sample_labels_s = Variable(sample_labels_s)
 
 if os.path.exists(args.checkpath) == False:
     os.mkdir(args.checkpath)
@@ -153,10 +160,10 @@ def train():
     criterion = nn.CrossEntropyLoss().cuda()
     all_step = args.steps
     data_iter_s = iter(source_loader)
-    data_iter_t = iter(target_loader)
+    # data_iter_t = iter(target_loader)
     data_iter_t_unl = iter(target_loader_unl)
     len_train_source = len(source_loader)
-    len_train_target = len(target_loader)
+    # len_train_target = len(target_loader)
     len_train_target_semi = len(target_loader_unl)
     best_acc = 0
     counter = 0
@@ -166,26 +173,34 @@ def train():
         optimizer_f = inv_lr_scheduler(param_lr_f, optimizer_f, step,
                                        init_lr=args.lr)
         lr = optimizer_f.param_groups[0]['lr']
-        if step % len_train_target == 0:
-            data_iter_t = iter(target_loader)
+        # if step % len_train_target == 0:
+            # data_iter_t = iter(target_loader)
         if step % len_train_target_semi == 0:
             data_iter_t_unl = iter(target_loader_unl)
         if step % len_train_source == 0:
             data_iter_s = iter(source_loader)
-        data_t = next(data_iter_t)
+        # data_t = next(data_iter_t)
         data_t_unl = next(data_iter_t_unl)
         data_s = next(data_iter_s)
         im_data_s.data.resize_(data_s[0].size()).copy_(data_s[0])
         gt_labels_s.data.resize_(data_s[1].size()).copy_(data_s[1])
-        im_data_t.data.resize_(data_t[0].size()).copy_(data_t[0])
-        gt_labels_t.data.resize_(data_t[1].size()).copy_(data_t[1])
+        # im_data_t.data.resize_(data_t[0].size()).copy_(data_t[0])
+        # gt_labels_t.data.resize_(data_t[1].size()).copy_(data_t[1])
         im_data_tu.data.resize_(data_t_unl[0].size()).copy_(data_t_unl[0])
         zero_grad_all()
-        data = torch.cat((im_data_s, im_data_t), 0)
-        target = torch.cat((gt_labels_s, gt_labels_t), 0)
+        # data = torch.cat((im_data_s, im_data_t), 0)
+        # print(im_data_s.size())
+        # print(gt_labels_s.size())
+        data = im_data_s
+        # target = torch.cat((gt_labels_s, gt_labels_t), 0)
+        target = gt_labels_s
+        # print(target)
+
         output = G(data)
         out1 = F1(output)
-        loss = criterion(out1, target)
+        # print(sum(out1))
+        # print(target.detach())
+        loss = criterion(out1, target.detach().squeeze())
         loss.backward(retain_graph=True)
         optimizer_g.step()
         optimizer_f.step()
@@ -275,13 +290,13 @@ def test(loader):
             gt_labels_t.data.resize_(data_t[1].size()).copy_(data_t[1])
             feat = G(im_data_t)
             output1 = F1(feat)
-            output_all = np.r_[output_all, output1.data.cpu().numpy()]
+            output_all = np.r_[output_all, output1.data.cuda().numpy()]
             size += im_data_t.size(0)
             pred1 = output1.data.max(1)[1]
             for t, p in zip(gt_labels_t.view(-1), pred1.view(-1)):
                 confusion_matrix[t.long(), p.long()] += 1
-            correct += pred1.eq(gt_labels_t.data).cpu().sum()
-            test_loss += criterion(output1, gt_labels_t) / len(loader)
+            correct += pred1.eq(gt_labels_t.data).cuda().sum()
+            test_loss += criterion(output1, gt_labels_t.detach().squeeze()) / len(loader)
     print('\nTest set: Average loss: {:.4f}, '
           'Accuracy: {}/{} F1 ({:.0f}%)\n'.
           format(test_loss, correct, size,

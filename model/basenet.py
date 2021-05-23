@@ -81,6 +81,7 @@ class Predictor(nn.Module):
         self.temp = temp
 
     def forward(self, x, reverse=False, eta=0.1):
+        x = x.view(x.size(0), 256 * 4)
         if reverse:
             x = grad_reverse(x, eta)
         x = F.normalize(x)
@@ -119,3 +120,25 @@ class Discriminator(nn.Module):
         x = F.relu(self.fc2_1(x))
         x_out = F.sigmoid(self.fc3_1(x))
         return x_out
+
+class FCnet(nn.Module):
+    def __init__(self, inc=2048):
+        super(FCnet, self).__init__()
+        self.features = nn.Sequential(
+            nn.Linear(inc, 2048),
+            nn.Linear(2048, 2048),
+            nn.Linear(2048, 1024),
+            nn.ReLU(inplace=True)
+        )
+        self.classifier = nn.Sequential(
+            nn.Dropout(),
+            nn.Linear(1024, 1024),
+            nn.ReLU(inplace=True),
+            nn.Linear(1024, 1024)
+        )
+
+    def forward(self, x):
+        x = self.features(x)
+        x = torch.flatten(x,1)
+        x = self.classifier(x)
+        return x
