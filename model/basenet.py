@@ -138,7 +138,7 @@ class FCnet(nn.Module):
         )
         self.domain_classifier = nn.Sequential(
             nn.Linear(1024, 512),
-            nn.BatchNorm1d(100),
+            nn.BatchNorm1d(512),
             nn.ReLU(inplace=True),
             nn.Linear(512, 1),
             nn.Sigmoid()

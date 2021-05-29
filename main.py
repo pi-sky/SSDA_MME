@@ -204,14 +204,14 @@ def train():
         out1 = F1(output)
 
         domain_label = torch.zeros(batch_size)
-        domain_label = domain_label.long().cuda()
+        domain_label = domain_label.float().cuda()
         err_s_domain = loss_domain(domain_output, domain_label)
 
         #training on unlabeled target data
         tar_data = im_data_tu
         output_target_u, domain_output = G(tar_data, lamda = args.lamda)
         domain_label = torch.ones(batch_size)
-        domain_label = domain_label.long().cuda()
+        domain_label = domain_label.float().cuda()
         err_t_domain = loss_domain(domain_output, domain_label)
 
         # print(sum(out1))
@@ -224,7 +224,7 @@ def train():
         optimizer_f.step()
         zero_grad_all()
         if not args.method == 'S+T':
-            output = G(im_data_tu)
+            output, dom_out = G(im_data_tu, lamda = args.lamda)
             if args.method == 'ENT':
                 loss_t = entropy(F1, output, args.lamda)
                 loss_t.backward()
@@ -305,7 +305,7 @@ def test(loader):
         for batch_idx, data_t in enumerate(loader):
             im_data_t.data.resize_(data_t[0].size()).copy_(data_t[0])
             gt_labels_t.data.resize_(data_t[1].size()).copy_(data_t[1])
-            feat = G(im_data_t)
+            feat, dom_out = G(im_data_t, lamda = args.lamda)
             output1 = F1(feat)
             output_all = np.r_[output_all, output1.data.cpu().numpy()]
             size += im_data_t.size(0)
@@ -313,7 +313,10 @@ def test(loader):
             for t, p in zip(gt_labels_t.view(-1), pred1.view(-1)):
                 confusion_matrix[t.long(), p.long()] += 1
             correct += pred1.eq(gt_labels_t.data).cuda().sum()
+
             test_loss += criterion(output1, gt_labels_t.detach().squeeze()) / len(loader)
+    per_class_acc = confusion_matrix.diag() / confusion_matrix.sum(1)
+    print("Per class accuracy: {:.3f}".format(per_class_acc.detach()))
     print('\nTest set: Average loss: {:.4f}, '
           'Accuracy: {}/{} F1 ({:.0f}%)\n'.
           format(test_loss, correct, size,
@@ -323,3 +326,5 @@ def test(loader):
 
 train()
 print("Done")
+
+def class_wise_acc(pred, truth):
