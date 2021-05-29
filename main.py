@@ -43,12 +43,12 @@ parser.add_argument('--save_interval', type=int, default=500, metavar='N',
                     help='how many batches to wait before saving a model')
 parser.add_argument('--net', type=str, default='alexnet',
                     help='which network to use')
-parser.add_argument('--source', type=str, default='real',
+parser.add_argument('--source', type=str, default='Amazon',
                     help='source domain')
-parser.add_argument('--target', type=str, default='sketch',
+parser.add_argument('--target', type=str, default='Dslr',
                     help='target domain')
-parser.add_argument('--dataset', type=str, default='multi',
-                    choices=['multi', 'office', 'office_home'],
+parser.add_argument('--dataset', type=str, default='office-31',
+                    choices=['multi', 'office-31', 'office_home'],
                     help='the name of dataset')
 parser.add_argument('--num', type=int, default=3,
                     help='number of labeled examples in the target')
@@ -57,16 +57,22 @@ parser.add_argument('--patience', type=int, default=5, metavar='S',
                          'before terminating. (default: 5 (5000 iterations))')
 parser.add_argument('--early', action='store_false', default=True,
                     help='early stopping on validation or not')
-parser.add_argument('--data_path', type=str, default='data_office/amazon_amazon.csv',
-                    help='pisky contri')
+parser.add_argument('--source_data_path', type=str, default='data_office/amazon_amazon.csv',
+                    help='data path for csv file from source')
+parser.add_argument('--target_data_path', type=str, default='data_office/dslr_dslr.csv',
+                    help='data path for csv file from target')
 
 args = parser.parse_args()
 batch_size = 3
 
 print('Dataset %s Source %s Target %s Labeled num perclass %s Network %s' %
       (args.dataset, args.source, args.target, args.num, args.net))
-source_loader, target_loader_unl, target_loader_val, \
-    target_loader_test = get_dataloaders(args.data_path, batch_size)
+# source_loader, target_loader_unl, target_loader_val, \
+#     target_loader_test = get_dataloaders(args.data_path, batch_size)
+
+source_loader_l, source_loader_unl, source_loader_test = get_dataloaders(args.source_data_path, domain='source', batch_size)
+target_loader_unl, target_loader_val, target_loader_test = get_dataloaders(args.target_data_path, domain='target', batch_size)
+
 class_list = [x for x in range(31)]
 
 use_gpu = torch.cuda.is_available()
@@ -115,6 +121,7 @@ G.cuda()
 F1.cuda()
 
 im_data_s = torch.FloatTensor(1)
+im_data_su = torch.FloatTensor(1)
 im_data_t = torch.FloatTensor(1)
 im_data_tu = torch.FloatTensor(1)
 gt_labels_s = torch.LongTensor(1)
@@ -123,6 +130,7 @@ sample_labels_t = torch.LongTensor(1)
 sample_labels_s = torch.LongTensor(1)
 
 im_data_s = im_data_s.cuda()
+im_data_su = im_data_su.cuda()
 im_data_t = im_data_t.cuda()
 im_data_tu = im_data_tu.cuda()
 gt_labels_s = gt_labels_s.cuda()
@@ -131,6 +139,7 @@ sample_labels_t = sample_labels_t.cuda()
 sample_labels_s = sample_labels_s.cuda()
 
 im_data_s.requires_grad_()
+im_data_su.requires_grad()
 im_data_t.requires_grad_()
 im_data_tu.requires_grad_()
 # gt_labels_s.requires_grad_()
@@ -163,11 +172,12 @@ def train():
     criterion = nn.CrossEntropyLoss().cuda()
     all_step = args.steps
     data_iter_s = iter(source_loader)
-    # data_iter_t = iter(target_loader)
+    data_iter_s_unl = iter(source_loader_unl)
     data_iter_t_unl = iter(target_loader_unl)
     len_train_source = len(source_loader)
-    # len_train_target = len(target_loader)
+    len_train_source_unl = len(source_loader_unl)
     len_train_target_semi = len(target_loader_unl)
+    best_acc_source = 0
     best_acc = 0
     counter = 0
     for step in range(all_step):
@@ -176,18 +186,19 @@ def train():
         optimizer_f = inv_lr_scheduler(param_lr_f, optimizer_f, step,
                                        init_lr=args.lr)
         lr = optimizer_f.param_groups[0]['lr']
-        # if step % len_train_target == 0:
-            # data_iter_t = iter(target_loader)
+        if step % len_train_source_unl == 0:
+            data_iter_s_unl = iter(source_loader_unl)
         if step % len_train_target_semi == 0:
             data_iter_t_unl = iter(target_loader_unl)
         if step % len_train_source == 0:
             data_iter_s = iter(source_loader)
         # data_t = next(data_iter_t)
         data_t_unl = next(data_iter_t_unl)
+        data_s_unl = next(data_iter_s_unl)
         data_s = next(data_iter_s)
         im_data_s.data.resize_(data_s[0].size()).copy_(data_s[0])
         gt_labels_s.data.resize_(data_s[1].size()).copy_(data_s[1])
-        # im_data_t.data.resize_(data_t[0].size()).copy_(data_t[0])
+        im_data_su.data.resize_(data_s_unl[0].size()).copy_(data_s_unl[0])
         # gt_labels_t.data.resize_(data_t[1].size()).copy_(data_t[1])
         im_data_tu.data.resize_(data_t_unl[0].size()).copy_(data_t_unl[0])
         zero_grad_all()
@@ -207,6 +218,13 @@ def train():
         domain_label = domain_label.float().cuda()
         err_s_domain = loss_domain(domain_output, domain_label)
 
+        #training on unlabeled source data
+        output_su = domain_output = G(im_data_su, lamda = args.lamda)
+        out2 = F1(output_su)
+        domain_label = torch.zeros(batch_size)
+        domain_label = domain_label.float().cuda()
+        err_s_un_domain = loss_domain(domain_output, domain_label)
+
         #training on unlabeled target data
         tar_data = im_data_tu
         output_target_u, domain_output = G(tar_data, lamda = args.lamda)
@@ -216,7 +234,7 @@ def train():
 
         # print(sum(out1))
         # print(target.detach())
-        total_domain_loss = err_s_domain + err_t_domain
+        total_domain_loss = err_s_domain + err_t_domain + err_s_un_domain
         classification_loss = criterion(out1, target.detach().squeeze())
         loss = classification_loss + total_domain_loss
         loss.backward(retain_graph=True)
@@ -224,7 +242,7 @@ def train():
         optimizer_f.step()
         zero_grad_all()
         if not args.method == 'S+T':
-            output, dom_out = G(im_data_tu, lamda = args.lamda)
+            output, dom_out = G(im_data_su, lamda = args.lamda)
             if args.method == 'ENT':
                 loss_t = entropy(F1, output, args.lamda)
                 loss_t.backward()
@@ -253,10 +271,17 @@ def train():
         if step % args.log_interval == 0:
             print(log_train)
         if step % args.save_interval == 0 and step > 0:
+            print("eval on source unlabeled data")
+            loss_source_test, acc_source_test = test(source_loader_test)
+            print("eval on target test and val respectively")
             loss_test, acc_test = test(target_loader_test)
             loss_val, acc_val = test(target_loader_val)
             G.train()
             F1.train()
+            #this if block keep track of best acc on source
+            if acc_source_test>=best_acc_source:
+                best_acc_source = acc_source_test
+
             if acc_val >= best_acc:
                 best_acc = acc_val
                 best_acc_test = acc_test
@@ -327,4 +352,4 @@ def test(loader):
 train()
 print("Done")
 
-def class_wise_acc(pred, truth):
+

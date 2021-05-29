@@ -36,12 +36,21 @@ def data_loader(dataset, batch_size=3):
 
     return data_loader
 
-def get_dataloaders(data_path, batch_size=3):
+def get_dataloaders(data_path, domain ='source', batch_size=3):
   dataset = pd.read_csv(data_path, header=None)
-  source_data, target_data = split_data(dataset)
-  source_loader = data_loader(source_data, batch_size)
-  target_loader_train = data_loader(target_data, batch_size)
-  target_loader_val = data_loader(target_data, batch_size)
-  target_loader_test = data_loader(target_data, batch_size)
+  if domain=='source':
+      source_data, source_un_data = split_data(dataset)
+      source_l_loader = data_loader(source_data, batch_size)
+      source_un_loader = data_loader(source_un_data, batch_size)
+      source_test_loader = data_loader(source_un_data, batch_size)
 
-  return source_loader, target_loader_train, target_loader_val, target_loader_test
+      return source_l_loader, source_un_loader, source_test_loader
+  elif domain=='target':
+      target_un_loader = data_loader(dataset, batch_size)
+      target_loader_val = data_loader(dataset, batch_size)
+      target_loader_test = data_loader(dataset, batch_size)
+
+      return target_un_loader, target_loader_val, target_loader_test
+  else:
+      print("Specify domain for dataloader")
+      return 0
