@@ -36,12 +36,12 @@ def data_loader(dataset, batch_size=3):
 
     return data_loader
 
-def get_dataloaders(data_path):
+def get_dataloaders(data_path, batch_size=3):
   dataset = pd.read_csv(data_path, header=None)
   source_data, target_data = split_data(dataset)
-  source_loader = data_loader(source_data)
-  target_loader_train = data_loader(target_data)
-  target_loader_val = data_loader(target_data)
-  target_loader_test = data_loader(target_data)
+  source_loader = data_loader(source_data, batch_size)
+  target_loader_train = data_loader(target_data, batch_size)
+  target_loader_val = data_loader(target_data, batch_size)
+  target_loader_test = data_loader(target_data, batch_size)
 
   return source_loader, target_loader_train, target_loader_val, target_loader_test

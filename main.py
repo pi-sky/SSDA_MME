@@ -61,10 +61,12 @@ parser.add_argument('--data_path', type=str, default='data_office/amazon_amazon.
                     help='pisky contri')
 
 args = parser.parse_args()
+batch_size = 3
+
 print('Dataset %s Source %s Target %s Labeled num perclass %s Network %s' %
       (args.dataset, args.source, args.target, args.num, args.net))
 source_loader, target_loader_unl, target_loader_val, \
-    target_loader_test = get_dataloaders(args.data_path)
+    target_loader_test = get_dataloaders(args.data_path, batch_size)
 class_list = [x for x in range(31)]
 
 use_gpu = torch.cuda.is_available()
@@ -147,6 +149,7 @@ def train():
                             weight_decay=0.0005, nesterov=True)
     optimizer_f = optim.SGD(list(F1.parameters()), lr=1.0, momentum=0.9,
                             weight_decay=0.0005, nesterov=True)
+    loss_domain = nn.BCELoss().cuda()
 
     def zero_grad_all():
         optimizer_g.zero_grad()
@@ -196,11 +199,26 @@ def train():
         target = gt_labels_s
         # print(target)
 
-        output = G(data)
+        # training on labeled source data
+        output, domain_output = G(data, lamda = args.lamda)
         out1 = F1(output)
+
+        domain_label = torch.zeros(batch_size)
+        domain_label = domain_label.long().cuda()
+        err_s_domain = loss_domain(domain_output, domain_label)
+
+        #training on unlabeled target data
+        tar_data = im_data_tu
+        output_target_u, domain_output = G(tar_data, lamda = args.lamda)
+        domain_label = torch.ones(batch_size)
+        domain_label = domain_label.long().cuda()
+        err_t_domain = loss_domain(domain_output, domain_label)
+
         # print(sum(out1))
         # print(target.detach())
-        loss = criterion(out1, target.detach().squeeze())
+        total_domain_loss = err_s_domain + err_t_domain
+        classification_loss = criterion(out1, target.detach().squeeze())
+        loss = classification_loss + total_domain_loss
         loss.backward(retain_graph=True)
         optimizer_g.step()
         optimizer_f.step()
@@ -219,10 +237,9 @@ def train():
                 optimizer_g.step()
             else:
                 raise ValueError('Method cannot be recognized.')
-            log_train = 'S {} T {} Train Ep: {} lr{} \t ' \
-                        'Loss Classification: {:.6f} Loss T {:.6f} ' \
-                        'Method {}\n'.format(args.source, args.target,
-                                             step, lr, loss.data,
+            log_train = 'Train Ep: {} lr{} \t ' \
+                        'Loss Classification: {:.6f} Domain Classifier Loss {:.6f} Loss T {:.6f} ' \
+                        'Method {}\n'.format(step, lr, classification_loss.data, total_domain_loss.data,
                                              -loss_t.data, args.method)
         else:
             log_train = 'S {} T {} Train Ep: {} lr{} \t ' \
@@ -305,3 +322,4 @@ def test(loader):
 
 
 train()
+print("Done")

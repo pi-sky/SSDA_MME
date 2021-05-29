@@ -136,9 +136,33 @@ class FCnet(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(1024, 1024)
         )
+        self.domain_classifier = nn.Sequential(
+            nn.Linear(1024, 512),
+            nn.BatchNorm1d(100),
+            nn.ReLU(inplace=True),
+            nn.Linear(512, 1),
+            nn.Sigmoid()
+        )
 
-    def forward(self, x):
+    def forward(self, x, lamda):
         x = self.features(x)
         x = torch.flatten(x,1)
         x = self.classifier(x)
-        return x
+        reverse_x = ReverseLayerF.apply(x, lamda)
+        domain_output = self.domain_classifier(reverse_x)
+        return x, domain_output
+
+class ReverseLayerF(Function):
+
+    @staticmethod
+    def forward(ctx, x, alpha):
+        ctx.alpha = alpha
+
+        return x.view_as(x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        output = grad_output.neg() * ctx.alpha
+
+        return output, None
+
