@@ -70,8 +70,8 @@ print('Dataset %s Source %s Target %s Labeled num perclass %s Network %s' %
 # source_loader, target_loader_unl, target_loader_val, \
 #     target_loader_test = get_dataloaders(args.data_path, batch_size)
 
-source_loader_l, source_loader_unl, source_loader_test = get_dataloaders(args.source_data_path, domain='source', batch_size)
-target_loader_unl, target_loader_val, target_loader_test = get_dataloaders(args.target_data_path, domain='target', batch_size)
+source_loader, source_loader_unl, source_loader_test = get_dataloaders(args.source_data_path, 'source', batch_size)
+target_loader_unl, target_loader_val, target_loader_test = get_dataloaders(args.target_data_path, 'target', batch_size)
 
 class_list = [x for x in range(31)]
 
@@ -139,7 +139,7 @@ sample_labels_t = sample_labels_t.cuda()
 sample_labels_s = sample_labels_s.cuda()
 
 im_data_s.requires_grad_()
-im_data_su.requires_grad()
+im_data_su.requires_grad_()
 im_data_t.requires_grad_()
 im_data_tu.requires_grad_()
 # gt_labels_s.requires_grad_()
@@ -219,7 +219,7 @@ def train():
         err_s_domain = loss_domain(domain_output, domain_label)
 
         #training on unlabeled source data
-        output_su = domain_output = G(im_data_su, lamda = args.lamda)
+        output_su, domain_output = G(im_data_su, lamda = args.lamda)
         out2 = F1(output_su)
         domain_label = torch.zeros(batch_size)
         domain_label = domain_label.float().cuda()
@@ -341,7 +341,7 @@ def test(loader):
 
             test_loss += criterion(output1, gt_labels_t.detach().squeeze()) / len(loader)
     per_class_acc = confusion_matrix.diag() / confusion_matrix.sum(1)
-    print("Per class accuracy: {:.3f}".format(per_class_acc.detach()))
+    print("Per class accuracy: {}".format(per_class_acc.detach()))
     print('\nTest set: Average loss: {:.4f}, '
           'Accuracy: {}/{} F1 ({:.0f}%)\n'.
           format(test_loss, correct, size,
