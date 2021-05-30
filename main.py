@@ -10,7 +10,7 @@ from model.resnet import resnet34
 from model.basenet import AlexNetBase, VGGBase, Predictor, Predictor_deep, FCnet
 from utils.utils import weights_init
 from utils.lr_schedule import inv_lr_scheduler
-from utils.get_loader import get_dataloaders
+from utils.get_loader import get_dataloaders, get_domain_from_path
 # from utils.return_dataset import return_dataset
 from utils.loss import entropy, adentropy
 # Training settings
@@ -61,28 +61,39 @@ parser.add_argument('--source_data_path', type=str, default='data_office/amazon_
                     help='data path for csv file from source')
 parser.add_argument('--target_data_path', type=str, default='data_office/dslr_dslr.csv',
                     help='data path for csv file from target')
+parser.add_argument('--frac', type=float, default=0.06,
+                    help='Fraction of source data to use as labeled source samples')
 
 args = parser.parse_args()
 batch_size = 3
+source_domain = get_domain_from_path(args.source_data_path)
+target_domain = get_domain_from_path(args.target_data_path)
 
 print('Dataset %s Source %s Target %s Labeled num perclass %s Network %s' %
-      (args.dataset, args.source, args.target, args.num, args.net))
+      (args.dataset, source_domain, target_domain, args.num, args.net))
 # source_loader, target_loader_unl, target_loader_val, \
 #     target_loader_test = get_dataloaders(args.data_path, batch_size)
 
-source_loader, source_loader_unl, source_loader_test = get_dataloaders(args.source_data_path, 'source', batch_size)
-target_loader_unl, target_loader_val, target_loader_test = get_dataloaders(args.target_data_path, 'target', batch_size)
+source_loader, source_loader_unl, source_loader_test = get_dataloaders(args.source_data_path,
+                                                                       'source', batch_size, frac=args.frac)
+target_loader_unl, target_loader_val, target_loader_test = get_dataloaders(args.target_data_path,
+                                                                           'target', batch_size)
 
 class_list = [x for x in range(31)]
 
 use_gpu = torch.cuda.is_available()
-record_dir = 'record/%s/%s' % (args.dataset, args.method)
+record_dir = 'record/%s/%s/%s' % (args.dataset, source_domain, target_domain)
 if not os.path.exists(record_dir):
     os.makedirs(record_dir)
 record_file = os.path.join(record_dir,
-                           '%s_net_%s_%s_to_%s_num_%s' %
-                           (args.method, args.net, args.source,
-                            args.target, args.num))
+                           '%s_source_%s_to_target_%s_num_class_%s' %
+                           (args.method, source_domain,
+                            target_domain, str(len(class_list))))
+
+final_record_dir = 'record/%s' % (args.dataset)
+if not os.path.exists(final_record_dir):
+    os.makedirs(final_record_dir)
+final_record_file = os.path.join(final_record_dir, 'Final_records_for_all_domains')
 
 torch.cuda.manual_seed(args.seed)
 if args.net == 'resnet34':
@@ -272,10 +283,10 @@ def train():
             print(log_train)
         if step % args.save_interval == 0 and step > 0:
             print("eval on source unlabeled data")
-            loss_source_test, acc_source_test = test(source_loader_test)
+            loss_source_test, acc_source_test, per_class_acc_s = test(source_loader_test)
             print("eval on target test and val respectively")
-            loss_test, acc_test = test(target_loader_test)
-            loss_val, acc_val = test(target_loader_val)
+            loss_test, acc_test, per_class_acc_t = test(target_loader_test)
+            loss_val, acc_val, _ = test(target_loader_val)
             G.train()
             F1.train()
             #this if block keep track of best acc on source
@@ -285,19 +296,28 @@ def train():
             if acc_val >= best_acc:
                 best_acc = acc_val
                 best_acc_test = acc_test
+                best_acc_source = acc_source_test
                 counter = 0
             else:
                 counter += 1
-            if args.early:
-                if counter > args.patience:
-                    break
-            print('best acc test %f best acc val %f' % (best_acc_test,
-                                                        acc_val))
+
+            print('best acc test source %f ,best acc test target %f ,current_ep acc val %f' % (best_acc_source, best_acc_test,
+                                                                                       acc_val))
             print('record %s' % record_file)
             with open(record_file, 'a') as f:
-                f.write('step %d best %f final %f \n' % (step,
+                f.write('step %d best_acc_source_test %f best_acc_test_target %f final_ep_acc_val %f \n' % (step,
+                                                         best_acc_source,
                                                          best_acc_test,
                                                          acc_val))
+            if args.early:
+                if counter > args.patience:
+                    with open(final_record_file, 'a') as f:
+                        f.write("Final accuracy for source: %s, target: %s is \n" % (source_domain, target_domain))
+                        f.write("Test acc on unlabeled_source= {:.4f} and per_class_acc are {} \n".format(acc_source_test, per_class_acc_s))
+                        f.write("Test acc on target= {:.4f} and per_class_acc are {} \n".format(acc_test, per_class_acc_t))
+                        f.write('\n')
+                    break
+
             G.train()
             F1.train()
             if args.save_check:
@@ -346,7 +366,7 @@ def test(loader):
           'Accuracy: {}/{} F1 ({:.0f}%)\n'.
           format(test_loss, correct, size,
                  100. * correct / size))
-    return test_loss.data, 100. * float(correct) / size
+    return test_loss.data, 100. * float(correct) / size, per_class_acc
 
 
 train()
