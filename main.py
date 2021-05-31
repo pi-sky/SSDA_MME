@@ -10,9 +10,10 @@ from model.resnet import resnet34
 from model.basenet import AlexNetBase, VGGBase, Predictor, Predictor_deep, FCnet
 from utils.utils import weights_init
 from utils.lr_schedule import inv_lr_scheduler
-from utils.get_loader import get_dataloaders
+from utils.get_loader import get_dataloaders, get_domain_from_path
 # from utils.return_dataset import return_dataset
-from utils.loss import entropy, adentropy
+from utils.loss import entropy, adentropy, bce_loss
+import torch.nn.functional as F
 # Training settings
 parser = argparse.ArgumentParser(description='SSDA Classification')
 parser.add_argument('--steps', type=int, default=50000, metavar='N',
@@ -59,22 +60,38 @@ parser.add_argument('--early', action='store_false', default=True,
                     help='early stopping on validation or not')
 parser.add_argument('--data_path', type=str, default='data_office/amazon_amazon.csv',
                     help='pisky contri')
+parser.add_argument('--source_data_path', type=str, default='data_office/amazon_amazon.csv',
+                    help='data path for csv file from source')
+parser.add_argument('--target_data_path', type=str, default='data_office/dslr_dslr.csv',
+                    help='data path for csv file from target')
 
 args = parser.parse_args()
 print('Dataset %s Source %s Target %s Labeled num perclass %s Network %s' %
       (args.dataset, args.source, args.target, args.num, args.net))
-source_loader, target_loader_unl, target_loader_val, \
-    target_loader_test = get_dataloaders(args.data_path)
-class_list = [x for x in range(31)]
+# source_loader, target_loader_unl, target_loader_val, \
+#     target_loader_test = get_dataloaders(args.data_path)
+source_loader = get_dataloaders(args.source_data_path,'source')
+target_loader_unl, target_loader_val, target_loader_test = get_dataloaders(args.target_data_path,'target')
+
+source_domain = get_domain_from_path(args.source_data_path)
+target_domain = get_domain_from_path(args.target_data_path)
+
+class_list = [x for x in range(21)]
+num_class = len(class_list)
 
 use_gpu = torch.cuda.is_available()
-record_dir = 'record/%s/%s' % (args.dataset, args.method)
+record_dir = 'record/%s/%s/%s' % (args.dataset, source_domain, target_domain)
 if not os.path.exists(record_dir):
     os.makedirs(record_dir)
 record_file = os.path.join(record_dir,
-                           '%s_net_%s_%s_to_%s_num_%s' %
-                           (args.method, args.net, args.source,
-                            args.target, args.num))
+                           '%s_source_%s_to_target_%s_num_class_%s' %
+                           (args.method, source_domain,
+                            target_domain, str(len(class_list))))
+
+final_record_dir = 'record/%s' % (args.dataset)
+if not os.path.exists(final_record_dir):
+    os.makedirs(final_record_dir)
+final_record_file = os.path.join(final_record_dir, 'Final_records_for_all_domains')
 
 torch.cuda.manual_seed(args.seed)
 if args.net == 'resnet34':
@@ -102,10 +119,10 @@ for key, value in dict(G.named_parameters()).items():
                         'weight_decay': 0.0005}]
 
 if "resnet" in args.net:
-    F1 = Predictor_deep(num_class=len(class_list),
+    F1 = Predictor_deep(num_class=num_class,
                         inc=inc)
 else:
-    F1 = Predictor(num_class=len(class_list), inc=inc//2,
+    F1 = Predictor(num_class=num_class, inc=inc//2,
                    temp=args.T)
 weights_init(F1)
 lr = args.lr
@@ -202,6 +219,20 @@ def train():
         # print(target.detach())
         loss = criterion(out1, target.detach().squeeze())
         loss.backward(retain_graph=True)
+
+        target_funk = torch.FloatTensor(torch.FloatTensor(im_data_tu.size()[0], 2).fill_(0.5).cuda())
+        target_funk.requires_grad_()
+        p = 1.0
+
+        feat_t = G(im_data_tu)
+        out_t = F1(feat_t, reverse=True)
+        out_t = F.softmax(out_t)
+        prob1 = torch.sum(out_t[:, :num_class - 1], 1).view(-1, 1)
+        prob2 = out_t[:, num_class - 1].contiguous().view(-1, 1)
+        prob = torch.cat((prob1, prob2), 1)
+        loss_bce = bce_loss(prob, target_funk)
+        loss_bce.backward()
+
         optimizer_g.step()
         optimizer_f.step()
         zero_grad_all()
@@ -219,16 +250,14 @@ def train():
                 optimizer_g.step()
             else:
                 raise ValueError('Method cannot be recognized.')
-            log_train = 'S {} T {} Train Ep: {} lr{} \t ' \
-                        'Loss Classification: {:.6f} Loss T {:.6f} ' \
-                        'Method {}\n'.format(args.source, args.target,
-                                             step, lr, loss.data,
-                                             -loss_t.data, args.method)
+            log_train = ' Train Ep: {} lr{} \t ' \
+                        'Loss Classification: {:.6f} Loss T {:.6f} Loss BCE {:.6f}' \
+                        'Method {}\n'.format(step, lr, loss.data,
+                                             -loss_t.data, loss_bce.data, args.method)
         else:
-            log_train = 'S {} T {} Train Ep: {} lr{} \t ' \
+            log_train = 'Train Ep: {} lr{} \t ' \
                         'Loss Classification: {:.6f} Method {}\n'.\
-                format(args.source, args.target,
-                       step, lr, loss.data,
+                format(step, lr, loss.data,
                        args.method)
         G.zero_grad()
         F1.zero_grad()
@@ -236,8 +265,8 @@ def train():
         if step % args.log_interval == 0:
             print(log_train)
         if step % args.save_interval == 0 and step > 0:
-            loss_test, acc_test = test(target_loader_test)
-            loss_val, acc_val = test(target_loader_val)
+            loss_test, acc_test, per_class_acc_t = test(target_loader_test)
+            loss_val, acc_val, _ = test(target_loader_val)
             G.train()
             F1.train()
             if acc_val >= best_acc:
@@ -246,9 +275,7 @@ def train():
                 counter = 0
             else:
                 counter += 1
-            if args.early:
-                if counter > args.patience:
-                    break
+
             print('best acc test %f best acc val %f' % (best_acc_test,
                                                         acc_val))
             print('record %s' % record_file)
@@ -256,6 +283,15 @@ def train():
                 f.write('step %d best %f final %f \n' % (step,
                                                          best_acc_test,
                                                          acc_val))
+            if args.early:
+                if counter > args.patience:
+                    with open(final_record_file, 'a') as f:
+                        f.write("Final accuracy for source: %s, target: %s is \n" % (source_domain, target_domain))
+                        f.write(
+                            "Test acc on target= {:.4f} and per_class_acc are {} \n".format(acc_test, per_class_acc_t))
+                        f.write('\n')
+                    break
+
             G.train()
             F1.train()
             if args.save_check:
@@ -297,11 +333,13 @@ def test(loader):
                 confusion_matrix[t.long(), p.long()] += 1
             correct += pred1.eq(gt_labels_t.data).cuda().sum()
             test_loss += criterion(output1, gt_labels_t.detach().squeeze()) / len(loader)
+    per_class_acc = confusion_matrix.diag() / confusion_matrix.sum(1)
+    print("Per class accuracy: {}".format(per_class_acc.detach()))
     print('\nTest set: Average loss: {:.4f}, '
           'Accuracy: {}/{} F1 ({:.0f}%)\n'.
           format(test_loss, correct, size,
                  100. * correct / size))
-    return test_loss.data, 100. * float(correct) / size
+    return test_loss.data, 100. * float(correct) / size , per_class_acc.detach().numpy()
 
 
 train()

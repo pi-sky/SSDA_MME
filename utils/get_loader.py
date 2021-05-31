@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 import random
+import os
 
 def split_data(data):
   # data = pd.read_csv(data_path, header=None)
@@ -36,12 +37,38 @@ def data_loader(dataset, batch_size=3):
 
     return data_loader
 
-def get_dataloaders(data_path):
+def get_dataloaders(data_path, domain = 'source'):
   dataset = pd.read_csv(data_path, header=None)
-  source_data, target_data = split_data(dataset)
-  source_loader = data_loader(source_data)
-  target_loader_train = data_loader(target_data)
-  target_loader_val = data_loader(target_data)
-  target_loader_test = data_loader(target_data)
+  if domain == 'source':
+      source_data, unused_data1 = split_data(dataset)
+      known_source_data, _ , unused_data2 = split_unknown(source_data)
+      source_loader = data_loader(known_source_data)
+      return source_data
+  elif domain=='target':
+      unused_data3, unused_data4, target_data = split_unknown(dataset)
+      target_loader_train = data_loader(target_data)
+      target_loader_val = data_loader(target_data)
+      target_loader_test = data_loader(target_data)
+      return target_loader_train, target_loader_val, target_loader_test
+  else:
+    print("Specify domain for dataloader")
+    return -1
 
-  return source_loader, target_loader_train, target_loader_val, target_loader_test
+def split_unknown(dataset):
+    dataset.set_axis([*dataset.columns[:-1], "class"], axis=1, inplace=True)
+    mask = dataset['class'] <= 19
+    df1 = dataset[mask]
+    df2 = dataset[~mask]
+    df2.loc[:, ['class']] = 20.0
+    known_data = df1.copy()
+    unknown_data = df2.copy()
+    dataset['class'].replace([x for x in range(21, 31)], [20 for x in range(21, 31)], inplace = True)
+
+    return known_data, unknown_data, dataset.copy()
+
+# path is of form  '...../domain_domain.extension'
+def get_domain_from_path(path):
+    folder, file = os.path.split(path)
+    file_name = os.path.splitext(file)
+    domain = file_name[0].split('_')
+    return domain[0]

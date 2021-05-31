@@ -39,3 +39,11 @@ def adentropy(F1, feat, lamda, eta=1.0):
     loss_adent = lamda * torch.mean(torch.sum(out_t1 *
                                               (torch.log(out_t1 + 1e-5)), 1))
     return loss_adent
+
+def bce_loss(output, target):
+    output_neg = 1 - output
+    target_neg = 1 - target
+    result = torch.mean(target * torch.log(output + 1e-6))
+    result += torch.mean(target_neg * torch.log(output_neg + 1e-6))
+    return -torch.mean(result)
+
