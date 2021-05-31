@@ -156,9 +156,7 @@ im_data_tu.requires_grad_()
 if os.path.exists(args.checkpath) == False:
     os.mkdir(args.checkpath)
 
-def zero_grad_all():
-    optimizer_g.zero_grad()
-    optimizer_f.zero_grad()
+
 
 def train():
     G.train()
@@ -167,6 +165,10 @@ def train():
                             weight_decay=0.0005, nesterov=True)
     optimizer_f = optim.SGD(list(F1.parameters()), lr=1.0, momentum=0.9,
                             weight_decay=0.0005, nesterov=True)
+
+    def zero_grad_all():
+        optimizer_g.zero_grad()
+        optimizer_f.zero_grad()
 
     param_lr_g = []
     for param_group in optimizer_g.param_groups:
@@ -223,20 +225,20 @@ def train():
         optimizer_f.step()
         zero_grad_all()
 
-        target_funk = torch.cuda.FloatTensor(torch.cuda.FloatTensor(im_data_tu.size()[0], 2).fill_(0.5).cuda())
-
-        feat_t = G(im_data_tu)
-        out_t = F1(feat_t, reverse=True)
-        out_t = F.softmax(out_t)
-        prob1 = torch.sum(out_t[:, :num_class - 1], 1).view(-1, 1)
-        prob2 = out_t[:, num_class - 1].contiguous().view(-1, 1)
-        prob = torch.cat((prob1, prob2), 1)
-        loss_bce = bce_loss(prob, target_funk)
-        loss_bce.backward()
-
-        optimizer_g.step()
-        optimizer_f.step()
-        zero_grad_all()
+        # target_funk = torch.cuda.FloatTensor(torch.cuda.FloatTensor(im_data_tu.size()[0], 2).fill_(0.5).cuda())
+        #
+        # feat_t = G(im_data_tu)
+        # out_t = F1(feat_t, reverse=True)
+        # out_t = F.softmax(out_t)
+        # prob1 = torch.sum(out_t[:, :num_class - 1], 1).view(-1, 1)
+        # prob2 = out_t[:, num_class - 1].contiguous().view(-1, 1)
+        # prob = torch.cat((prob1, prob2), 1)
+        # loss_bce = bce_loss(prob, target_funk)
+        # loss_bce.backward()
+        #
+        # optimizer_g.step()
+        # optimizer_f.step()
+        # zero_grad_all()
         if not args.method == 'S+T':
             output = G(im_data_tu)
             if args.method == 'ENT':
@@ -260,6 +262,21 @@ def train():
                         'Loss Classification: {:.6f} Method {}\n'.\
                 format(step, lr, loss.data,
                        args.method)
+        target_funk = torch.cuda.FloatTensor(torch.cuda.FloatTensor(im_data_tu.size()[0], 2).fill_(0.5).cuda())
+
+        feat_t = G(im_data_tu)
+        out_t = F1(feat_t, reverse=True)
+        out_t = F.softmax(out_t)
+        prob1 = torch.sum(out_t[:, :num_class - 1], 1).view(-1, 1)
+        prob2 = out_t[:, num_class - 1].contiguous().view(-1, 1)
+        prob = torch.cat((prob1, prob2), 1)
+        loss_bce = bce_loss(prob, target_funk)
+        loss_bce.backward()
+
+        optimizer_f.step()
+        optimizer_g.step()
+        zero_grad_all()
+
         G.zero_grad()
         F1.zero_grad()
         zero_grad_all()
