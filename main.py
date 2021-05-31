@@ -70,7 +70,7 @@ print('Dataset %s Source %s Target %s Labeled num perclass %s Network %s' %
       (args.dataset, args.source, args.target, args.num, args.net))
 # source_loader, target_loader_unl, target_loader_val, \
 #     target_loader_test = get_dataloaders(args.data_path)
-source_loader = get_dataloaders(args.source_data_path,'source')
+source_loader, source_loader_unl = get_dataloaders(args.source_data_path,'source')
 target_loader_unl, target_loader_val, target_loader_test = get_dataloaders(args.target_data_path,'target')
 
 source_domain = get_domain_from_path(args.source_data_path)
@@ -130,6 +130,7 @@ G.cuda()
 F1.cuda()
 
 im_data_s = torch.FloatTensor(1)
+im_data_su = torch.FloatTensor(1)
 im_data_t = torch.FloatTensor(1)
 im_data_tu = torch.FloatTensor(1)
 gt_labels_s = torch.LongTensor(1)
@@ -138,6 +139,7 @@ sample_labels_t = torch.LongTensor(1)
 sample_labels_s = torch.LongTensor(1)
 
 im_data_s = im_data_s.cuda()
+im_data_su = im_data_su.cuda()
 im_data_t = im_data_t.cuda()
 im_data_tu = im_data_tu.cuda()
 gt_labels_s = gt_labels_s.cuda()
@@ -146,6 +148,7 @@ sample_labels_t = sample_labels_t.cuda()
 sample_labels_s = sample_labels_s.cuda()
 
 im_data_s.requires_grad_()
+im_data_su.requires_grad_()
 im_data_t.requires_grad_()
 im_data_tu.requires_grad_()
 # gt_labels_s.requires_grad_()
@@ -155,7 +158,6 @@ im_data_tu.requires_grad_()
 
 if os.path.exists(args.checkpath) == False:
     os.mkdir(args.checkpath)
-
 
 
 def train():
@@ -179,9 +181,11 @@ def train():
     criterion = nn.CrossEntropyLoss().cuda()
     all_step = args.steps
     data_iter_s = iter(source_loader)
+    data_iter_s_unl = iter(source_loader_unl)
     # data_iter_t = iter(target_loader)
     data_iter_t_unl = iter(target_loader_unl)
     len_train_source = len(source_loader)
+    len_train_source_unl = len(source_loader_unl)
     # len_train_target = len(target_loader)
     len_train_target_semi = len(target_loader_unl)
     best_acc = 0
@@ -198,11 +202,15 @@ def train():
             data_iter_t_unl = iter(target_loader_unl)
         if step % len_train_source == 0:
             data_iter_s = iter(source_loader)
+        if step % len_train_source_unl == 0:
+            data_iter_s_unl = iter(source_loader_unl)
         # data_t = next(data_iter_t)
         data_t_unl = next(data_iter_t_unl)
         data_s = next(data_iter_s)
+        data_s_unl =nex(data_iter_s_unl)
         im_data_s.data.resize_(data_s[0].size()).copy_(data_s[0])
         gt_labels_s.data.resize_(data_s[1].size()).copy_(data_s[1])
+        im_data_su.data.resize_(data_s_unl[0].size()).copy_(data_s_unl[0])
         # im_data_t.data.resize_(data_t[0].size()).copy_(data_t[0])
         # gt_labels_t.data.resize_(data_t[1].size()).copy_(data_t[1])
         im_data_tu.data.resize_(data_t_unl[0].size()).copy_(data_t_unl[0])
@@ -221,26 +229,26 @@ def train():
         # print(target.detach())
         loss = criterion(out1, target.detach().squeeze())
         loss.backward(retain_graph=True)
-        optimizer_g.step()
-        optimizer_f.step()
-        zero_grad_all()
-
-        # target_funk = torch.cuda.FloatTensor(torch.cuda.FloatTensor(im_data_tu.size()[0], 2).fill_(0.5).cuda())
-        #
-        # feat_t = G(im_data_tu)
-        # out_t = F1(feat_t, reverse=True)
-        # out_t = F.softmax(out_t)
-        # prob1 = torch.sum(out_t[:, :num_class - 1], 1).view(-1, 1)
-        # prob2 = out_t[:, num_class - 1].contiguous().view(-1, 1)
-        # prob = torch.cat((prob1, prob2), 1)
-        # loss_bce = bce_loss(prob, target_funk)
-        # loss_bce.backward()
-        #
         # optimizer_g.step()
         # optimizer_f.step()
         # zero_grad_all()
+
+        target_funk = torch.cuda.FloatTensor(torch.cuda.FloatTensor(im_data_tu.size()[0], 2).fill_(0.5).cuda())
+
+        feat_t = G(im_data_tu)
+        out_t = F1(feat_t, reverse=True)
+        out_t = F.softmax(out_t)
+        prob1 = torch.sum(out_t[:, :num_class - 1], 1).view(-1, 1)
+        prob2 = out_t[:, num_class - 1].contiguous().view(-1, 1)
+        prob = torch.cat((prob1, prob2), 1)
+        loss_bce = bce_loss(prob, target_funk)
+        loss_bce.backward()
+
+        optimizer_g.step()
+        optimizer_f.step()
+        zero_grad_all()
         if not args.method == 'S+T':
-            output = G(im_data_tu)
+            output = G(im_data_su)
             if args.method == 'ENT':
                 loss_t = entropy(F1, output, args.lamda)
                 loss_t.backward()
@@ -262,20 +270,11 @@ def train():
                         'Loss Classification: {:.6f} Method {}\n'.\
                 format(step, lr, loss.data,
                        args.method)
-        target_funk = torch.cuda.FloatTensor(torch.cuda.FloatTensor(im_data_tu.size()[0], 2).fill_(0.5).cuda())
-
-        feat_t = G(im_data_tu)
-        out_t = F1(feat_t, reverse=True)
-        out_t = F.softmax(out_t)
-        prob1 = torch.sum(out_t[:, :num_class - 1], 1).view(-1, 1)
-        prob2 = out_t[:, num_class - 1].contiguous().view(-1, 1)
-        prob = torch.cat((prob1, prob2), 1)
-        loss_bce = bce_loss(prob, target_funk)
-        loss_bce.backward()
-
-        optimizer_f.step()
-        optimizer_g.step()
-        zero_grad_all()
+        # total_loss = loss+loss_bce+loss_t
+        # total_loss.backward()
+        # optimizer_g.step()
+        # optimizer_f.step()
+        # zero_grad_all()
 
         G.zero_grad()
         F1.zero_grad()
