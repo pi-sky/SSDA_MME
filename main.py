@@ -156,6 +156,9 @@ im_data_tu.requires_grad_()
 if os.path.exists(args.checkpath) == False:
     os.mkdir(args.checkpath)
 
+def zero_grad_all():
+    optimizer_g.zero_grad()
+    optimizer_f.zero_grad()
 
 def train():
     G.train()
@@ -165,9 +168,6 @@ def train():
     optimizer_f = optim.SGD(list(F1.parameters()), lr=1.0, momentum=0.9,
                             weight_decay=0.0005, nesterov=True)
 
-    def zero_grad_all():
-        optimizer_g.zero_grad()
-        optimizer_f.zero_grad()
     param_lr_g = []
     for param_group in optimizer_g.param_groups:
         param_lr_g.append(param_group["lr"])
@@ -219,10 +219,11 @@ def train():
         # print(target.detach())
         loss = criterion(out1, target.detach().squeeze())
         loss.backward(retain_graph=True)
+        optimizer_g.step()
+        optimizer_f.step()
+        zero_grad_all()
 
-        target_funk = torch.FloatTensor(torch.FloatTensor(im_data_tu.size()[0], 2).fill_(0.5).cuda())
-        target_funk.requires_grad_()
-        p = 1.0
+        target_funk = torch.cuda.FloatTensor(torch.cuda.FloatTensor(im_data_tu.size()[0], 2).fill_(0.5).cuda())
 
         feat_t = G(im_data_tu)
         out_t = F1(feat_t, reverse=True)

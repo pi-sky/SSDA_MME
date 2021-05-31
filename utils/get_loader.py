@@ -43,7 +43,7 @@ def get_dataloaders(data_path, domain = 'source'):
       source_data, unused_data1 = split_data(dataset)
       known_source_data, _ , unused_data2 = split_unknown(source_data)
       source_loader = data_loader(known_source_data)
-      return source_data
+      return source_loader
   elif domain=='target':
       unused_data3, unused_data4, target_data = split_unknown(dataset)
       target_loader_train = data_loader(target_data)
@@ -62,7 +62,7 @@ def split_unknown(dataset):
     df2.loc[:, ['class']] = 20.0
     known_data = df1.copy()
     unknown_data = df2.copy()
-    dataset['class'].replace([x for x in range(21, 31)], [20 for x in range(21, 31)], inplace = True)
+    dataset['class'].replace([x for x in range(21, 31)], [20.0 for x in range(21, 31)], inplace = True)
 
     return known_data, unknown_data, dataset.copy()
 
